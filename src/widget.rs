@@ -1,12 +1,10 @@
-use std::default;
-
 use iced::{
     alignment::Horizontal, 
-    widget::{ button, checkbox, column, container, row, scrollable, text, text_input, Column, Space}, 
+    widget::{ button, column, container, row, scrollable, text, text_input, Column, Space}, 
     Length
 };
 use once_cell::sync::Lazy;
-use crate::{config::DataConfig, theme, Container, Element, Message, Text};
+use crate::{config::{DataConfig, DeploymentConfig}, theme, Container, Element, Message, Text};
 // tools
 fn centerd_container<'a,Message>(
     content: impl Into<Element<'a,Message>>
@@ -29,7 +27,7 @@ fn text_adv<'a>(str: impl ToString) -> Text<'a> {
  // namespace view
  pub fn widget_namespace(data_config:&DataConfig) -> Element<Message> {
     let title = "Load Data";
-    let namespace = data_config.namespace.as_str();
+    let namespace = data_config.current_namespace.as_str();
     let input = text_input("input namespace",namespace)
         .on_input(|v| Message::SelectNamespace(v.clone()))
         .style(theme::TextInputStyle::Inverted);
@@ -100,7 +98,7 @@ fn widget_view_entry((_index,entry):(usize,&Entry)) ->Element<Message> {
         .width(Length::Fill)
         .on_press(Message::Choose(entry.name.clone()))
         .padding(4)
-        .style(if entry.successed {theme::Button::Start} else if entry.selected {theme::Button::Primary} else {theme::Button::Entry})
+        .style(if entry.succeed {theme::Button::Start} else if entry.selected {theme::Button::Primary} else {theme::Button::Entry})
         .into()
 }
 
@@ -108,7 +106,7 @@ fn widget_view_entry((_index,entry):(usize,&Entry)) ->Element<Message> {
 pub struct Entry {
     pub name: String,
     pub selected: bool,
-    pub successed: bool,
+    pub succeed: bool,
 }
 
 #[derive(Debug,Default)]
@@ -151,9 +149,7 @@ impl EntryList {
 pub enum ForwardBox {
     #[default]
     None,
-    Selected {
-        name: String,
-    },
+    Selected,
     Error(String)
 }
 
@@ -164,20 +160,16 @@ impl ForwardBox {
         let content = match &self {
             ForwardBox::Error(v) => column![text(v.clone())],
             ForwardBox::None => column![text("None Selected")],
-            ForwardBox::Selected {name} => {
-                let forward_info = data_config.forward_infos.get(name.as_str());
-                
-                let forward = if let Some(v) = forward_info  {
-                    v.forward.as_str()
-                } else { "0" };
-
-                let forward_input = text_input("forward port",forward)
-                .on_input(|v| Message::InputForward{name:name.clone(),port:v.clone()})
+            ForwardBox::Selected => {
+                let port = data_config.current_port.clone();
+                let name = data_config.current_deployment.clone();
+                let forward_input = text_input("forward port",port.clone().as_str())
+                .on_input(|v| Message::InputForward{port:v.clone()})
                 .style(theme::TextInputStyle::Inverted);
 
                 let button = button("forward").on_press(Message::Forward{
                     name:name.clone(),
-                    forward:u16::from_str_radix(forward, 10).unwrap_or(0),
+                    port:port.parse::<u16>().unwrap_or(0),
                 });
 
                 column![

@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::PFDeployment;
 
 #[derive(Debug,Clone)]
@@ -8,9 +10,12 @@ pub enum Message {
     Choose(String),
     Ignore,
     Load,
-    Forward{name:String,forward:u16},
-    SaveConfig,
-    LoadConfig,
-    InputForward{name:String,port:String},
-    Error(String,u8)
+    Forward{name:String,port:u16},
+    SaveConfig(Option<PathBuf>),
+    LoadConfig(Option<PathBuf>),
+    InputForward{port:String},
+    Forwarded(bool),
+    Error(String,u8),
+    SaveConfigDialog,
+    LoadConfigDialog
 }

@@ -5,6 +5,7 @@ mod config;
 mod widget;
 mod message;
 mod error;
+mod util;
 
 pub use k8s::PFDeployment;
 pub use app::App;

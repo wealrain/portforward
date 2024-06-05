@@ -88,9 +88,9 @@ impl Debug for PFDeployment {
 }
 
 impl PFDeployment {
-    pub async fn list_deployment(name_space: String) -> Result<Vec<PFDeployment>> {
+    pub async fn list_deployment(namespace: String) -> Result<Vec<PFDeployment>> {
         let client = kube::Client::try_default().await?;
-        let api: kube::Api<Deployment> = kube::Api::namespaced(client.clone(), name_space.as_str());
+        let api: kube::Api<Deployment> = kube::Api::namespaced(client.clone(), namespace.as_str());
         let list = api.list(&ListParams::default()).await?;
         let mut deployments = Vec::new();
         for deployment in list.items {
@@ -161,8 +161,8 @@ impl PFDeployment {
         Ok(None)
     } 
 
-    pub async fn port_forward(name:String,port:u16) -> Result<()> {
-        let deployment = Self::find_deployment("wuxi-dev", name.clone()).await?; 
+    pub async fn port_forward(namespace:String,name:String,port:u16) -> Result<()> {
+        let deployment = Self::find_deployment(namespace.as_str(), name.clone()).await?; 
         if let Some(deployment) = deployment {
             let pod = deployment.find_pod().await?;
             if let Some(pod) = pod {

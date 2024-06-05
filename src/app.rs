@@ -1,10 +1,11 @@
-use std::fmt::format;
+use std::collections::HashMap;
 
-use iced::widget::{button, column, row, text};
+use iced::widget::{button, checkbox, column, row, text, Space};
 use iced::{window, Command, Length, Settings, Size};
 use iced::multi_window::{self,Application};
+use crate::util::{file_dialog, load_deployment, port_forward};
 use crate::{theme, widget_namespace, widget_search_bar, Container, Element, Entry, EntryList, ForwardBox, Message, PFDeployment};
-use crate::config::{Config, DataConfig, ForwardInfo};
+use crate::config::{Config, Deployment};
 
 const WINDOW_SIZE: Size = Size::new(780.0, 720.0);
 fn application_icon() -> iced::window::Icon {
@@ -14,15 +15,14 @@ fn application_icon() -> iced::window::Icon {
 
 #[derive(Default)]
 pub struct App {
-    deployments: EntryList,
     filter_deployments: EntryList,
-    data_config: DataConfig,
     forward_box: ForwardBox,
+    config: Config,
 }
 
 impl App {
     pub fn launch() -> iced::Result {
-        let config = Config::load();
+        let config = Config::default();
         Self::run(Self::settings(config))
     }
 
@@ -39,6 +39,40 @@ impl App {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.config.data_config.clear();
+        self.filter_deployments.entries.clear();
+        self.forward_box = ForwardBox::None;
+    }
+
+    pub fn fill(&mut self,deployments: Vec<PFDeployment>) {
+        let namespace = self.config.data_config.current_namespace.clone();
+        self.clear();
+        let deployment_map = self.config.deployment_config
+            .deployments
+            .entry(namespace.clone())
+            .or_insert(HashMap::<String,Deployment>::new());
+        
+        let mut succeed_count = 0;
+
+        for deployment in deployments {
+            let v_deployment = deployment_map.entry(deployment.name.clone()).or_insert(Deployment::default());
+
+            self.filter_deployments.entries.push(Entry { 
+                name: deployment.name.clone(), 
+                selected: false,
+                succeed: v_deployment.forwarded == 1 
+            });
+
+            if v_deployment.forwarded == 1 {
+                succeed_count += 1;
+            }
+        }
+        self.config.data_config.current_namespace = namespace.clone();
+        self.config.data_config.current_entries = deployment_map.len();
+        self.config.data_config.current_succeed = succeed_count;
+    }
+
     pub fn select(&mut self,name: String) {
         for entry in self.filter_deployments.entries.iter_mut() {
             if entry.name == name {
@@ -47,37 +81,62 @@ impl App {
                 entry.selected = false;
             }
         }
+        let namespace = self.config.data_config.current_namespace.clone();
+        let deployments = self.config.deployment_config.deployments.get(namespace.as_str()).unwrap();
+        let deployment = deployments.get(name.as_str()).unwrap();
+        let port = deployment.port;
+        self.config.data_config.current_deployment = name.clone();
+        self.config.data_config.current_port = port.to_string();
+        self.forward_box = ForwardBox::Selected;
+    }
 
-        for entry in self.deployments.entries.iter_mut() {
+    pub fn filter(&mut self) {
+        if self.config.deployment_config.deployments.len() == 0 {
+            return;
+        }
+
+        let search_value = self.config.data_config.search_value.clone();
+        let forwarded = self.config.data_config.check_forwarded;
+        
+        let deployments = self.config.deployment_config.deployments.get(self.config.data_config.current_namespace.clone().as_str()).unwrap();
+
+        let temp:Vec<Entry> = deployments.iter().filter(|entry| {
+            entry.0.contains(&search_value) && (if forwarded { entry.1.forwarded == 1} else { true })
+        }).map(|v|{
+            Entry { name: v.0.clone(), selected: false, succeed: v.1.forwarded == 1 }
+        }).collect();
+        self.filter_deployments.entries.clear();
+        for deployment in temp {
+            self.filter_deployments.entries.push(Entry { 
+                name: deployment.name.clone(), 
+                selected: deployment.selected,
+                succeed: deployment.succeed 
+            });  
+        }
+    }
+
+    pub fn forward(&mut self,name:String,port:u16) -> Command<Message> {
+        let namespace = self.config.data_config.current_namespace.clone();
+        for entry in self.filter_deployments.entries.iter_mut() {
             if entry.name == name {
-                entry.selected = true;
-            } else {
-                entry.selected = false;
+                entry.succeed = true;
             }
         }
+
+        let deployments = self.config.deployment_config.deployments.entry(namespace.clone()).or_insert(HashMap::<String,Deployment>::new());
+        let deployment = deployments.entry(name.clone()).or_insert(Deployment::default());
+        deployment.port = port;
+        deployment.forwarded = 1;
+        
+
+        self.config.data_config.current_succeed = deployments.iter().filter(|entry| {
+            entry.1.forwarded == 1
+        }).count();
+        return port_forward(namespace,name.clone(), port);
     }
 }
 
-fn load_deployment(namespace: String) -> Command<Message> {
-    let namespace = namespace.clone();
-    Command::perform(PFDeployment::list_deployment(namespace),|v|{
-        
-        match v {
-            Ok(list) => Message::ListDeployment(list),
-            Err(e) => Message::Error(format!("{}",e),0),
-        }
-    })
-}
 
-fn port_forward(name: String,forward: u16) -> Command<Message> {
-    let name = name.clone();
-    Command::perform(PFDeployment::port_forward(name, forward),|v|{
-        match v {
-            Ok(_) => Message::Ignore,
-            Err(e) => Message::Error(format!("{}",e),1),
-        }
-    })
-}
 
 
 
@@ -98,111 +157,92 @@ impl multi_window::Application for App {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
-            Message::ListDeployment(v) => {
-                self.data_config.list_deployment_error.clear();
-                self.deployments.entries.clear();
-                self.filter_deployments.entries.clear();
-                for deployment in v {
-                    self.deployments.entries.push(Entry { 
-                        name: deployment.name.clone(), 
-                        selected: false,
-                        successed: false 
-                    });
-
-                    self.filter_deployments.entries.push(Entry { 
-                        name: deployment.name.clone(), 
-                        selected: false,
-                        successed: false 
-                    });
-
-                    self.data_config.forward_infos.insert(deployment.name.clone(), ForwardInfo{
-                        name: deployment.name.clone(),
-                        port: "".into(),
-                        forward: "".into(),
-                    });
-                }
-                self.data_config.entries = self.deployments.entries.len();
-                self.data_config.successed = 0;
-                Command::none()
-            },
+            Message::ListDeployment(v) => self.fill(v),
             Message::FilterDeployment(v) => {
-                // 原始数据得保留，过滤显示数据
-                self.data_config.search_value = v.clone();
-                let temp: Vec<&Entry> = self.deployments.entries.iter().filter(|entry| {
-                    entry.name.contains(&v)
-                }).collect();
-                self.filter_deployments.entries.clear();
-                for deployment in temp {
-                    self.filter_deployments.entries.push(Entry { 
-                        name: deployment.name.clone(), 
-                        selected: deployment.selected,
-                        successed: deployment.successed 
-                    });  
-                }
-
-                Command::none()
+                self.config.data_config.search_value = v.clone();
+                self.filter();
             }
             Message::Load => {
-                self.data_config.search_value = "".into();
-                self.forward_box = ForwardBox::None;
-                load_deployment(self.data_config.namespace.clone()) 
+                let namespace = self.config.data_config.current_namespace.clone();
+                self.clear();
+                self.config.data_config.current_namespace = namespace.clone();
+                return load_deployment(namespace); 
             }
             Message::Choose(name) => {
-                self.select(name.clone());
-                let forward_info = self.data_config.forward_infos.get(name.clone().as_str()).unwrap();
-                self.data_config.forward_infos.insert(name.clone(), ForwardInfo{
-                    name: forward_info.name.clone(),
-                    port: forward_info.port.clone(),
-                    forward: forward_info.forward.clone(),
-                });
-                
-                self.forward_box = ForwardBox::Selected { name };
-                Command::none()
+                self.select(name.clone());      
             }
-            Message::Forward{name,forward} => {
-                for entry in self.filter_deployments.entries.iter_mut() {
-                    if entry.name == name {
-                        entry.successed = true;
-                    }
-                }
-
-                for entry in self.deployments.entries.iter_mut() {
-                    if entry.name == name {
-                        entry.successed = true;
-                    }
-                }
-
-                self.data_config.successed = self.deployments.entries.iter().filter(|entry| {
-                    entry.successed
-                }).count();
-               port_forward(name.clone(), forward)
+            Message::Forward{name,port} => {
+                return self.forward(name, port);
             }
-            Message::InputForward{name,port} => {
-                let forward_info = self.data_config.forward_infos.get(name.as_str()).unwrap();
-                self.data_config.forward_infos.insert(name, ForwardInfo{
-                    name: forward_info.name.clone(),
-                    port: forward_info.port.clone(),
-                    forward: port.clone(),
-                });
-                Command::none()
+            Message::InputForward{port} => {
+               self.config.data_config.current_port = port;
             }
             Message::Error(v,t) => {
                 if t == 0 {
-                    self.data_config.list_deployment_error = v;
+                    self.config.data_config.list_deployment_error = v;
                 } else if t == 1{
                     self.forward_box = ForwardBox::Error(v);
                 }
                 
-                Command::none()
             }
             Message::SelectNamespace(v) => {
-                self.data_config.namespace = v.clone();
-                Command::none()
+                self.config.data_config.current_namespace = v.clone();
             }
+            Message::Forwarded(v) => {
+                self.config.data_config.check_forwarded = v;
+                self.filter();
+            }
+            Message::SaveConfigDialog => {
+                return Command::perform(file_dialog(), Message::SaveConfig)
+            }
+            Message::LoadConfigDialog => {
+                return Command::perform(file_dialog(), Message::LoadConfig)
+            }
+            Message::SaveConfig(path) => {
+                if let Some(path) = path {
+                    let deployment_config = self.config.deployment_config.clone();
+                    return Command::perform(async move { deployment_config.save(path).await }, |_| Message::Ignore);
+                }
+            }
+            Message::LoadConfig(path) => {
+                if let Some(path) = path {
+                    if let Ok(_) = self.config.deployment_config.load(path) {
+                        let mut forward_command = Vec::<Command<Message>>::new();
+                        self.clear();
+                        
+                        for (namespace,deployments) in self.config.deployment_config.deployments.iter() {
+                            let mut count = 0;
+                            self.config.data_config.current_namespace = namespace.clone();
+
+                            for (name,deployment) in deployments.iter() {
+                                let succeed = deployment.forwarded  == 1 ;
+                               
+                                self.filter_deployments.entries.push(Entry { 
+                                    name: name.clone(), 
+                                    selected: false,
+                                    succeed
+                                });
+                                if succeed {
+                                    count += 1;
+                                    forward_command.push(port_forward(namespace.clone(),name.clone(), deployment.port));
+                                }
+                               
+                            }
+                            self.config.data_config.current_entries = deployments.len();
+                            self.config.data_config.current_succeed = count;
+                        }
+
+                        return Command::batch(forward_command);
+
+                    }
+                }
+            }
+
             _ => {
-                Command::none()
+                
             }
         }
+        Command::none()
     }
 
     fn view(
@@ -210,8 +250,8 @@ impl multi_window::Application for App {
         _id: iced::window::Id,
     ) -> Element<Message> {
         // left pane
-        let namespace_box = widget_namespace(&self.data_config);
-        let forward_box = self.forward_box.view(&self.data_config);
+        let namespace_box = widget_namespace(&self.config.data_config);
+        let forward_box = self.forward_box.view(&self.config.data_config);
 
         let left_view = column![
             namespace_box,
@@ -219,14 +259,18 @@ impl multi_window::Application for App {
         ].spacing(10);
 
         // right pane
-        let search_bar = widget_search_bar(&self.data_config);
+        let search_bar = widget_search_bar(&self.config.data_config);
         let info_bar = row![
-            text(format!("DEPLOYMENTS: {}    FORWARDING: {}",self.data_config.entries,self.data_config.successed)),
+            text(format!("DEPLOYMENTS: {}    FORWARDING: {}",self.config.data_config.current_entries,self.config.data_config.current_succeed)),
+            Space::with_width(Length::Fill),
+            checkbox("FORWARDED",self.config.data_config.check_forwarded)
+                .on_toggle(Message::Forwarded)
+                .style(theme::CheckBox::Inverted)
         ]
         .spacing(8)
         .align_items(iced::Alignment::Center);
 
-        let entry_list = self.filter_deployments.view(self.data_config.list_deployment_error.clone());
+        let entry_list = self.filter_deployments.view(self.config.data_config.list_deployment_error.clone());
        
         let right_view = column![
              search_bar,
@@ -243,17 +287,16 @@ impl multi_window::Application for App {
         .spacing(10)
         .width(Length::Fill);
 
-        // todo
-        // let bottom_buttons = row![
-        //     button("Save Config").on_press(Message::SaveConfig).style(theme::Button::Primary),
-        //     button("Load Config").on_press(Message::LoadConfig).style(theme::Button::Primary),
-        // ]
-        // .spacing(8)
-        // .align_items(iced::Alignment::Center);
+        let bottom_buttons = row![
+            button("Save Config").on_press(Message::SaveConfigDialog).style(theme::Button::Primary),
+            button("Load Config").on_press(Message::LoadConfigDialog).style(theme::Button::Primary),
+        ]
+        .spacing(8)
+        .align_items(iced::Alignment::Center);
 
         let main = column![
             center,
-            // bottom_buttons
+            bottom_buttons
         ].spacing(10);
        
         Container::new(main)
