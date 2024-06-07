@@ -1,7 +1,5 @@
 use iced::{
-    alignment::Horizontal, 
-    widget::{ button, column, container, row, scrollable, text, text_input, Column, Space}, 
-    Length
+    alignment::Horizontal, widget::{ button, column, container, row, scrollable, text, text_input, Column, Space}, window, Length
 };
 use once_cell::sync::Lazy;
 use crate::{config::{DataConfig, DeploymentConfig}, theme, Container, Element, Message, Text};
@@ -25,14 +23,14 @@ fn text_adv<'a>(str: impl ToString) -> Text<'a> {
 }
 
  // namespace view
- pub fn widget_namespace(data_config:&DataConfig) -> Element<Message> {
+ pub fn widget_namespace(id: window::Id,data_config:&DataConfig) -> Element<Message> {
     let title = "Load Data";
     let namespace = data_config.current_namespace.as_str();
     let input = text_input("input namespace",namespace)
-        .on_input(|v| Message::SelectNamespace(v.clone()))
+        .on_input(move|v| Message::SelectNamespace(id,v.clone()))
         .style(theme::TextInputStyle::Inverted);
     let button = button("Load Data")
-        .on_press(Message::Load)
+        .on_press(Message::Load(id))
         .style(theme::Button::Primary);
 
         let content = column![
@@ -65,14 +63,14 @@ fn text_adv<'a>(str: impl ToString) -> Text<'a> {
 
 // search bar
 pub static SEARCH_BAR_ID: Lazy<text_input::Id> = Lazy::new(text_input::Id::unique);
-pub fn widget_search_bar(data_config:&DataConfig) -> Element<Message> {
+pub fn widget_search_bar(id:window::Id,data_config:&DataConfig) -> Element<Message> {
     let search_value = data_config.search_value.as_str();
     let input = text_input("input deployment name",search_value)
         .id(SEARCH_BAR_ID.clone())
-        .on_input(|v| Message::FilterDeployment(v.clone()));
+        .on_input(move |v| Message::FilterDeployment(id,v.clone()));
     
-    let button = button("Search")
-        .on_press(Message::Ignore)
+    let button = button("New Window")
+        .on_press(Message::NewWindow)
         .style(theme::Button::Search);
 
     row![input, button]
@@ -84,7 +82,7 @@ pub fn widget_search_bar(data_config:&DataConfig) -> Element<Message> {
 
 // entry list
 
-fn widget_view_entry((_index,entry):(usize,&Entry)) ->Element<Message> {
+fn widget_view_entry((id,_index,entry):(window::Id,usize,&Entry)) ->Element<Message> {
     // let check = checkbox("", entry.selected)
     //     .on_toggle(move |selected| Message::SelectDeployment {name:entry.name.clone(),selected})
     //     .style(theme::CheckBox::Entry);
@@ -96,7 +94,7 @@ fn widget_view_entry((_index,entry):(usize,&Entry)) ->Element<Message> {
         .align_items(iced::Alignment::Center);
     button(view)
         .width(Length::Fill)
-        .on_press(Message::Choose(entry.name.clone()))
+        .on_press(Message::Choose(id,entry.name.clone()))
         .padding(4)
         .style(if entry.succeed {theme::Button::Start} else if entry.selected {theme::Button::Primary} else {theme::Button::Entry})
         .into()
@@ -109,13 +107,13 @@ pub struct Entry {
     pub succeed: bool,
 }
 
-#[derive(Debug,Default)]
+#[derive(Debug,Default,Clone)]
 pub struct EntryList {
     pub entries: Vec<Entry>
 }
 
 impl EntryList {
-    pub fn view(&self,error: String) ->Element<Message> {
+    pub fn view(&self,id: window::Id,error: String) ->Element<Message> {
         let entries = &self.entries;
         if !error.is_empty() {
             return centerd_container(
@@ -133,7 +131,7 @@ impl EntryList {
         }
 
         centerd_container(scrollable(row![
-            column(entries.iter().enumerate().map(widget_view_entry))
+            column(entries.iter().enumerate().map(move |v|{widget_view_entry((id,v.0,v.1))}))
             .spacing(10)
             .padding(5),
             Space::with_width(15)
@@ -154,7 +152,7 @@ pub enum ForwardBox {
 }
 
 impl ForwardBox {
-    pub fn view(&self,data_config:&DataConfig) -> Element<Message> {
+    pub fn view(&self,id: window::Id,data_config:&DataConfig) -> Element<Message> {
         let title = "Forward";
 
         let content = match &self {
@@ -164,10 +162,11 @@ impl ForwardBox {
                 let port = data_config.current_port.clone();
                 let name = data_config.current_deployment.clone();
                 let forward_input = text_input("forward port",port.clone().as_str())
-                .on_input(|v| Message::InputForward{port:v.clone()})
+                .on_input(move |v| Message::InputForward{id,port:v.clone()})
                 .style(theme::TextInputStyle::Inverted);
 
                 let button = button("forward").on_press(Message::Forward{
+                    id,
                     name:name.clone(),
                     port:port.parse::<u16>().unwrap_or(0),
                 });
